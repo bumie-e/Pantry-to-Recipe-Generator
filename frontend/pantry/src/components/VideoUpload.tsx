@@ -7,6 +7,8 @@ const VideoUpload: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [ingredients, setIngredients] = useState<{ class: string; confidence: number }[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -28,6 +30,9 @@ const VideoUpload: React.FC = () => {
     const formData = new FormData();
     formData.append('video', selectedFile);
 
+    setIsLoading(true);
+    setIngredients([]);
+
     try {
       const response = await axios.post('/api/upload', formData, {
         headers: {
@@ -43,12 +48,15 @@ const VideoUpload: React.FC = () => {
 
       if (response.status === 200) {
         toast.success('Video uploaded successfully!');
+        setIngredients(response.data.ingredients);
       } else {
         toast.error('Video upload failed.');
       }
     } catch (error) {
       console.error('Error uploading video:', error);
       toast.error('An error occurred during upload.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -92,6 +100,25 @@ const VideoUpload: React.FC = () => {
               ></div>
             </div>
           )}
+        </div>
+      )}
+
+      {isLoading && (
+        <div className="loading-spinner">
+          <p>Detecting ingredients...</p>
+        </div>
+      )}
+
+      {ingredients.length > 0 && (
+        <div className="ingredients-list">
+          <h3>Detected Ingredients</h3>
+          <ul>
+            {ingredients.map((ingredient, index) => (
+              <li key={index}>
+                {ingredient.class} - Confidence: {Math.round(ingredient.confidence * 100)}%
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>
