@@ -7,6 +7,9 @@ import os
 import tempfile
 import shutil
 from dotenv import load_dotenv
+from groq import Groq
+from pydantic import BaseModel
+from typing import List
 
 load_dotenv()
 app = FastAPI()
@@ -75,6 +78,43 @@ async def upload_video(video: UploadFile = File(...)):
         return JSONResponse(content={"message": f"An error occurred: {e}"}, status_code=500)
     finally:
         shutil.rmtree(temp_dir)
+
+class IngredientsRequest(BaseModel):
+    ingredients: List[str]
+
+with open("backend/prompt.txt", "r") as f:
+    prompt_template = f.read()
+
+def generate_recipes(ingredients: List[str]):
+    """
+    Generates recipes from a list of ingredients using the Groq API.
+    """
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    
+    prompt = prompt_template.replace("[List of ingredients]", ", ".join(ingredients))
+
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ],
+        model="llama-3.3-70b-versatile",
+    )
+
+    return chat_completion.choices[0].message.content
+
+@app.post("/recipes")
+async def get_recipes(request: IngredientsRequest):
+    """
+    Generates recipes from a list of ingredients.
+    """
+    try:
+        recipes = generate_recipes(request.ingredients)
+        return JSONResponse(content={"recipes": recipes}, status_code=200)
+    except Exception as e:
+        return JSONResponse(content={"message": f"An error occurred: {e}"}, status_code=500)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=3003)
