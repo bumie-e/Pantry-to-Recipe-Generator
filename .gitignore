@@ -212,3 +212,5 @@ frontend/node_modules/
 
 # Mac
 .DS_Store
+backend/.env
+yolov8n.pt
