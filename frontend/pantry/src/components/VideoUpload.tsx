@@ -9,6 +9,8 @@ const VideoUpload: React.FC = () => {
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [ingredients, setIngredients] = useState<{ class: string; confidence: number }[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [recipes, setRecipes] = useState<string[]>([]);
+  const [isGeneratingRecipes, setIsGeneratingRecipes] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -18,6 +20,7 @@ const VideoUpload: React.FC = () => {
       const url = URL.createObjectURL(file);
       setPreviewUrl(url);
       setUploadProgress(0);
+      setRecipes([]); // Reset recipes when a new file is selected
     }
   };
 
@@ -49,6 +52,7 @@ const VideoUpload: React.FC = () => {
       if (response.status === 200) {
         toast.success('Video uploaded successfully!');
         setIngredients(response.data.ingredients);
+        generateRecipes(response.data.ingredients.map((ing: { class: string }) => ing.class));
       } else {
         toast.error('Video upload failed.');
       }
@@ -57,6 +61,24 @@ const VideoUpload: React.FC = () => {
       toast.error('An error occurred during upload.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const generateRecipes = async (detectedIngredients: string[]) => {
+    setIsGeneratingRecipes(true);
+    try {
+      const response = await axios.post('/api/recipes', { ingredients: detectedIngredients });
+      if (response.status === 200) {
+        toast.success('Recipes generated successfully!');
+        setRecipes(response.data.recipes);
+      } else {
+        toast.error('Recipe generation failed.');
+      }
+    } catch (error) {
+      console.error('Error generating recipes:', error);
+      toast.error('An error occurred during recipe generation.');
+    } finally {
+      setIsGeneratingRecipes(false);
     }
   };
 
@@ -119,6 +141,23 @@ const VideoUpload: React.FC = () => {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {isGeneratingRecipes && (
+        <div className="loading-spinner">
+          <p>Generating recipes...</p>
+        </div>
+      )}
+
+      {recipes.length > 0 && (
+        <div className="recipes-list">
+          <h3>Suggested Recipes</h3>
+          {recipes.map((recipe, index) => (
+            <div key={index} className="recipe-card">
+              <pre>{recipe}</pre>
+            </div>
+          ))}
         </div>
       )}
     </div>
