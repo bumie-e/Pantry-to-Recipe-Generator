@@ -7,6 +7,10 @@ import os
 import tempfile
 import shutil
 from dotenv import load_dotenv
+from groq import Groq
+from pydantic import BaseModel
+from typing import List
+import base64
 
 load_dotenv()
 app = FastAPI()
@@ -51,9 +55,50 @@ def detect_ingredients(frames_dir: str):
     ingredients = [{"class": name, "confidence": conf} for name, conf in detected_ingredients.items()]
     return ingredients
 
+def detect_ingredients_groq(frames_dir: str):
+    """
+    Detects ingredients from a directory of frames using a Groq vision model.
+    """
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    
+    ingredients = set()
+
+    for frame_file in os.listdir(frames_dir):
+        frame_path = os.path.join(frames_dir, frame_file)
+        
+        with open(frame_path, "rb") as image_file:
+            encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
+
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Identify the food ingredients in this image. Respond with a comma-separated list of the ingredients you see.",
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{encoded_image}"
+                            },
+                        },
+                    ],
+                }
+            ],
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+        )
+        
+        detected = chat_completion.choices[0].message.content.split(',')
+        for item in detected:
+            ingredients.add(item.strip())
+
+    return list(ingredients)
+
 
 @app.post("/upload")
-async def upload_video(video: UploadFile = File(...)):
+async def upload_video(video: UploadFile = File(...), model: str = "roboflow"):
     """
     Uploads a video, extracts frames, detects ingredients, and returns the ingredients.
     """
@@ -68,13 +113,54 @@ async def upload_video(video: UploadFile = File(...)):
 
     try:
         extract_frames(video_path, frames_dir)
-        ingredients = detect_ingredients(frames_dir)
+        if model == "groq":
+            ingredients = detect_ingredients_groq(frames_dir)
+        else:
+            ingredients = detect_ingredients(frames_dir)
+        
         print("Detected ingredients:", ingredients)  # Log the ingredients
         return JSONResponse(content={"message": "Video processed successfully", "ingredients": ingredients}, status_code=200)
     except Exception as e:
         return JSONResponse(content={"message": f"An error occurred: {e}"}, status_code=500)
     finally:
         shutil.rmtree(temp_dir)
+
+class IngredientsRequest(BaseModel):
+    ingredients: List[str]
+
+with open("backend/prompt.txt", "r") as f:
+    prompt_template = f.read()
+
+def generate_recipes(ingredients: List[str]):
+    """
+    Generates recipes from a list of ingredients using the Groq API.
+    """
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    
+    prompt = prompt_template.replace("[List of ingredients]", ", ".join(ingredients))
+
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ],
+        model="llama-3.3-70b-versatile",
+    )
+
+    return chat_completion.choices[0].message.content
+
+@app.post("/recipes")
+async def get_recipes(request: IngredientsRequest):
+    """
+    Generates recipes from a list of ingredients.
+    """
+    try:
+        recipes = generate_recipes(request.ingredients)
+        return JSONResponse(content={"recipes": recipes}, status_code=200)
+    except Exception as e:
+        return JSONResponse(content={"message": f"An error occurred: {e}"}, status_code=500)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=3003)
