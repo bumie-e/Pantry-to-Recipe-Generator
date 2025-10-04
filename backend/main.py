@@ -11,6 +11,8 @@ from groq import Groq
 from pydantic import BaseModel
 from typing import List
 import base64
+import re
+import json
 
 load_dotenv()
 app = FastAPI()
@@ -94,11 +96,14 @@ def detect_ingredients_groq(frames_dir: str):
         for item in detected:
             ingredients.add(item.strip())
 
-    return list(ingredients)
+        detected_ingredients = [{"class": name, "confidence": 0.70} for name in list(ingredients)]
+    
+
+    return detected_ingredients #list(ingredients)
 
 
 @app.post("/upload")
-async def upload_video(video: UploadFile = File(...), model: str = "roboflow"):
+async def upload_video(video: UploadFile = File(...), model: str = "groq"):
     """
     Uploads a video, extracts frames, detects ingredients, and returns the ingredients.
     """
@@ -117,13 +122,14 @@ async def upload_video(video: UploadFile = File(...), model: str = "roboflow"):
             ingredients = detect_ingredients_groq(frames_dir)
         else:
             ingredients = detect_ingredients(frames_dir)
-        
         print("Detected ingredients:", ingredients)  # Log the ingredients
-        return JSONResponse(content={"message": "Video processed successfully", "ingredients": ingredients}, status_code=200)
+        return JSONResponse(content={"ingredients": ingredients}, status_code=200)
     except Exception as e:
-        return JSONResponse(content={"message": f"An error occurred: {e}"}, status_code=500)
+        print(f"Error processing video: {e}")
+        return JSONResponse(content={"ingredients": [], "message": f"An error occurred: {e}"}, status_code=500)
     finally:
         shutil.rmtree(temp_dir)
+        # shutil.rmtree(temp_dir)
 
 class IngredientsRequest(BaseModel):
     ingredients: List[str]
@@ -149,7 +155,31 @@ def generate_recipes(ingredients: List[str]):
         model="llama-3.3-70b-versatile",
     )
 
-    return chat_completion.choices[0].message.content
+
+    # Get the LLM response
+    import re
+    llm_content = chat_completion.choices[0].message.content
+    # Regex to capture the first JSON array/object inside the string
+    match = re.search(r"```json\s*(\{.*?\}|\[.*?\])\s*```", llm_content, re.DOTALL)
+
+    if match:
+        json_block = match.group(1)  # extract just the JSON portion
+        # data = json.loads(json_str)  # convert to Python object
+        # print(data[0]["name"])  # Example access: prints "Classic Macaroni"
+    else:
+        # Fallback: try to remove code fences if present
+        code_fence_pattern = r"```(?:json)?\s*([\s\S]*?)\s*```"
+        match = re.search(code_fence_pattern, llm_content)
+        json_block = match.group(1).strip() if match else llm_content
+    
+    # Parse the JSON response from the LLM
+    try:
+        recipes_json = json.loads(json_block)
+        return recipes_json
+    except json.JSONDecodeError:
+        # Handle cases where the LLM doesn't return valid JSON
+        print("Warning: LLM did not return valid JSON. Returning raw text.")
+        return llm_content
 
 @app.post("/recipes")
 async def get_recipes(request: IngredientsRequest):
@@ -158,6 +188,7 @@ async def get_recipes(request: IngredientsRequest):
     """
     try:
         recipes = generate_recipes(request.ingredients)
+        print(recipes)
         return JSONResponse(content={"recipes": recipes}, status_code=200)
     except Exception as e:
         return JSONResponse(content={"message": f"An error occurred: {e}"}, status_code=500)
