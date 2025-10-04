@@ -9,7 +9,7 @@ const VideoUpload: React.FC = () => {
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [ingredients, setIngredients] = useState<{ class: string; confidence: number }[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [recipes, setRecipes] = useState<string[]>([]);
+  const [recipes, setRecipes] = useState<any[]>([]);
   const [isGeneratingRecipes, setIsGeneratingRecipes] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -52,13 +52,17 @@ const VideoUpload: React.FC = () => {
       if (response.status === 200) {
         toast.success('Video uploaded successfully!');
         setIngredients(response.data.ingredients);
-        generateRecipes(response.data.ingredients.map((ing: { class: string }) => ing.class));
+        // Always send only ingredient names (strings) to /api/recipes
+        const ingredientNames = Array.isArray(response.data.ingredients)
+          ? response.data.ingredients.map((ing: any) => ing.class || String(ing))
+          : [];
+        generateRecipes(ingredientNames);
       } else {
         toast.error('Video upload failed.');
       }
     } catch (error) {
       console.error('Error uploading video:', error);
-      toast.error('An error occurred during upload.');
+      toast.error('An error occurred during upload.,');
     } finally {
       setIsLoading(false);
     }
@@ -70,7 +74,13 @@ const VideoUpload: React.FC = () => {
       const response = await axios.post('/api/recipes', { ingredients: detectedIngredients });
       if (response.status === 200) {
         toast.success('Recipes generated successfully!');
-        setRecipes(response.data.recipes);
+        if (Array.isArray(response.data.recipes)) {
+          setRecipes(response.data.recipes);
+        } else {
+          toast.error('Invalid recipe format received from API.');
+          console.error('API response for recipes is not an array:', response.data.recipes);
+          setRecipes([response.data.recipes]); // Display raw text if not an array
+        }
       } else {
         toast.error('Recipe generation failed.');
       }
@@ -131,15 +141,20 @@ const VideoUpload: React.FC = () => {
         </div>
       )}
 
-      {ingredients.length > 0 && (
+      {ingredients.length > 0 && Array.isArray(ingredients) && (
         <div className="ingredients-list">
           <h3>Detected Ingredients</h3>
           <ul>
-            {ingredients.map((ingredient, index) => (
-              <li key={index}>
-                {ingredient.class} - Confidence: {Math.round(ingredient.confidence * 100)}%
-              </li>
-            ))}
+            {ingredients.map((ingredient, index) => {
+              const name = ingredient?.class || String(ingredient);
+              const hasConfidence = typeof ingredient?.confidence === 'number' && !isNaN(ingredient.confidence);
+              const confidenceDisplay = hasConfidence ? `${Math.round(ingredient.confidence * 100)}%` : 'N/A';
+              return (
+                <li key={index}>
+                  {name} - Confidence: {confidenceDisplay}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -153,11 +168,38 @@ const VideoUpload: React.FC = () => {
       {recipes.length > 0 && (
         <div className="recipes-list">
           <h3>Suggested Recipes</h3>
-          {recipes.map((recipe, index) => (
-            <div key={index} className="recipe-card">
-              <pre>{recipe}</pre>
-            </div>
-          ))}
+          {recipes.map((recipe: any, index) => {
+            // If recipe is a string, just display it
+            if (typeof recipe === 'string') {
+              return (
+                <div key={index} className="recipe-card">
+                  <pre>{recipe}</pre>
+                </div>
+              );
+            }
+            // Otherwise, display structured recipe
+            return (
+              <div key={index} className="recipe-card">
+                <h4>{recipe.name}</h4>
+                <h5>Ingredients Used:</h5>
+                <ul>
+                  {Array.isArray(recipe.ingredients)
+                    ? recipe.ingredients.map((ing: string, i: number) => (
+                        <li key={i}>{ing}</li>
+                      ))
+                    : <li>{recipe.ingredients}</li>}
+                </ul>
+                <h5>Instructions:</h5>
+                <ol>
+                  {typeof recipe.instructions === 'string'
+                    ? recipe.instructions.split('\n').map((step: string, i: number) => (
+                        <li key={i}>{step}</li>
+                      ))
+                    : <li>{recipe.instructions}</li>}
+                </ol>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
