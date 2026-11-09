@@ -11,13 +11,26 @@ const cache = new Map<string, Promise<RecipeMedia>>();
 
 interface Meal { strMeal: string; strMealThumb: string; strYoutube: string }
 
+const IMAGE_HOSTS = ['www.themealdb.com', 'upload.wikimedia.org'];
+/** Only show images from known hosts over https. */
+function safeImage(url?: string | null): string | undefined {
+  try {
+    const u = new URL(url ?? '');
+    return u.protocol === 'https:' && IMAGE_HOSTS.includes(u.hostname) ? u.href : undefined;
+  } catch { return undefined; }
+}
+
 async function fromMealDb(query: string): Promise<{ imageUrl?: string; youtubeId?: string } | null> {
   const res = await fetch(`https://www.themealdb.com/api/json/v1/1/search.php?s=${encodeURIComponent(query)}`);
   if (!res.ok) return null;
   const meal = ((await res.json()).meals as Meal[] | null)?.[0];
   if (!meal) return null;
-  const youtubeId = meal.strYoutube ? new URL(meal.strYoutube).searchParams.get('v') ?? undefined : undefined;
-  return { imageUrl: meal.strMealThumb, youtubeId };
+  let youtubeId: string | undefined;
+  try {
+    const v = meal.strYoutube ? new URL(meal.strYoutube).searchParams.get('v') : null;
+    if (v && /^[\w-]{11}$/.test(v)) youtubeId = v;
+  } catch { /* malformed URL: no video */ }
+  return { imageUrl: safeImage(meal.strMealThumb), youtubeId };
 }
 
 /** YouTube's oEmbed endpoint answers 200 only for public, embeddable videos (private/removed ones give 401/404). */
@@ -42,7 +55,7 @@ async function fromWikipedia(query: string): Promise<string | null> {
     index: number;
     thumbnail?: { source: string };
   }[];
-  return pages.sort((a, b) => a.index - b.index).find((p) => p.thumbnail)?.thumbnail?.source ?? null;
+  return safeImage(pages.sort((a, b) => a.index - b.index).find((p) => p.thumbnail)?.thumbnail?.source) ?? null;
 }
 
 async function lookup(recipe: Recipe): Promise<RecipeMedia> {

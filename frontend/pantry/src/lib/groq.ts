@@ -8,15 +8,19 @@ const VISION_PREFERENCE = ['qwen3.8', 'qwen3.6', 'llama-4-scout', 'llama-4-maver
 const TEXT_PREFERENCE = ['llama-3.3-70b-versatile', 'gpt-oss-120b', 'llama-3.1-70b', 'gpt-oss-20b', 'llama-3.1-8b-instant'];
 const FRAMES_PER_REQUEST = 4;
 
+// The key lives only in this module's memory: it is gone on refresh or tab close and is never
+// written to disk. Older versions used localStorage/sessionStorage, so clear those leftovers.
+let memoryKey = '';
+const clearStoredKey = () => {
+  try { localStorage.removeItem(KEY_STORAGE); sessionStorage.removeItem(KEY_STORAGE); } catch { /* storage unavailable */ }
+};
+export const isValidGroqKey = (key: string): boolean => /^gsk_[A-Za-z0-9]{20,}$/.test(key.trim());
 export const getGroqKey = (): string => {
-  try { return localStorage.getItem(KEY_STORAGE) ?? ''; } catch { return ''; }
+  clearStoredKey();
+  return memoryKey;
 };
-export const saveGroqKey = (key: string) => {
-  try { localStorage.setItem(KEY_STORAGE, key.trim()); } catch { /* storage unavailable */ }
-};
-export const removeGroqKey = () => {
-  try { localStorage.removeItem(KEY_STORAGE); } catch { /* storage unavailable */ }
-};
+export const saveGroqKey = (key: string) => { memoryKey = key.trim(); };
+export const removeGroqKey = () => { memoryKey = ''; clearStoredKey(); };
 
 const modelCache = new Map<string, Promise<string[]>>();
 
@@ -136,6 +140,28 @@ async function makeCollage(frames: Blob[]): Promise<string> {
   return blobToDataUrl(blob);
 }
 
+const clean = (v: unknown, max: number): string =>
+  typeof v === 'string' ? [...v].map((c) => (c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127 ? ' ' : c)).join('').trim().slice(0, max) : '';
+const cleanList = (v: unknown, count: number, max: number): string[] =>
+  Array.isArray(v) ? v.map((x) => clean(x, max)).filter(Boolean).slice(0, count) : [];
+
+/** Model output is untrusted: keep only the expected fields, types and lengths. */
+function sanitiseRecipes(raw: unknown): Recipe[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, 5)
+    .map((r) => {
+      const o = (r ?? {}) as Record<string, unknown>;
+      return {
+        name: clean(o.name, 120),
+        dish: clean(o.dish, 80),
+        ingredients_used: cleanList(o.ingredients_used, 30, 80),
+        steps: cleanList(o.steps, 30, 500),
+      };
+    })
+    .filter((r) => r.name && r.steps.length > 0);
+}
+
 const normalise = (name: string) => name.trim().replace(/\.$/, '').toLowerCase();
 
 /** Detects ingredients with Groq vision: a few frames per request, requests in parallel. */
@@ -185,7 +211,7 @@ export async function detectIngredientsGroq(
   // Batches can show the same shelf, so keep the highest count per item rather than summing.
   const quantities = new Map<string, number>();
   for (const { name, quantity } of results.flat()) {
-    const key = normalise(name);
+    const key = clean(normalise(name), 40);
     if (key) quantities.set(key, Math.max(quantities.get(key) ?? 0, quantity));
   }
   return [...quantities].map(([name, quantity]) => ({ class: name, quantity }));
@@ -210,14 +236,15 @@ export async function generateRecipes(
       {
         role: 'user',
         content: `Suggest 3 recipes that can be made mostly from these ingredients (quantities in brackets, when known; do not use more than are available): ${ingredients
-      .map((i) => (i.quantity ? `${i.class} (${i.quantity})` : i.class))
+      .slice(0, 50)
+      .map((i) => { const n = clean(i.class, 40); return i.quantity ? `${n} (${i.quantity})` : n; })
       .join(', ')}.
 Assume basic staples (salt, pepper, oil, water) are available. Reply with JSON only in this shape:
 {"recipes":[{"name":"...","dish":"a well-known dish this resembles, such as omelette or fried rice","ingredients_used":["..."],"steps":["..."]}]}`,
       },
     ],
   }, (chars) => onProgress?.(Math.min(0.05 + (chars / EXPECTED_RECIPE_CHARS) * 0.9, 0.95), 'Writing your recipes'));
-  const recipes = parseJson<{ recipes?: Recipe[] }>(text).recipes ?? [];
+  const recipes = sanitiseRecipes(parseJson<{ recipes?: unknown }>(text).recipes);
   if (recipes.length === 0) throw new Error('No recipes came back. Try again.');
   return recipes;
 }
