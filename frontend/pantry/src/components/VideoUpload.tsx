@@ -7,6 +7,7 @@ import {
   detectIngredientsGroq,
   generateRecipes,
   getGroqKey,
+  isValidGroqKey,
   saveGroqKey,
   removeGroqKey,
 } from '../lib/groq';
@@ -76,11 +77,15 @@ const VideoUpload: React.FC = () => {
 
   const handleSaveKey = () => {
     if (!keyDraft.trim()) return;
+    if (!isValidGroqKey(keyDraft)) {
+      toast.error('That does not look like a Groq key. It starts with "gsk_".');
+      return;
+    }
     saveGroqKey(keyDraft);
     setGroqKey(keyDraft.trim());
     setKeyDraft('');
     setKeyOpen(false);
-    toast.success('Groq key saved in this browser.');
+    toast.success('Groq key loaded. It will be forgotten when you refresh.');
   };
 
   const handleRemoveKey = () => {
@@ -181,12 +186,12 @@ const VideoUpload: React.FC = () => {
             <button className="key-close" onClick={() => setKeyOpen(false)} aria-label="Close">×</button>
             {groqKey ? (
               <>
-                <p>Detection and recipes use Groq. The key stays in this browser.</p>
+                <p>Detection and recipes use Groq. The key is kept in memory only and is forgotten when you refresh or close the page.</p>
                 <button className="btn btn-ghost" onClick={handleRemoveKey}>Remove key</button>
               </>
             ) : (
               <>
-                <p>A free Groq key finds more ingredients and unlocks recipes. It stays in this browser.</p>
+                <p>A free Groq key finds more ingredients and unlocks recipes. It is kept in memory only and is forgotten when you refresh or close the page. Video frames are sent to Groq to find ingredients.</p>
                 <label htmlFor="groq-key">Groq API key</label>
                 <input
                   id="groq-key"

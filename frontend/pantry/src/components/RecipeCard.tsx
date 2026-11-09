@@ -23,6 +23,8 @@ const RecipeCard: React.FC<{ recipe: Recipe; tint: number }> = ({ recipe, tint }
             title={`How to make ${recipe.name}`}
             allow="autoplay; encrypted-media; picture-in-picture"
             allowFullScreen
+            sandbox="allow-scripts allow-same-origin allow-presentation"
+            referrerPolicy="strict-origin-when-cross-origin"
           />
         ) : media.imageUrl ? (
           <>

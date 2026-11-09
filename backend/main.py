@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from roboflow import Roboflow
@@ -13,6 +13,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from groq import Groq
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from typing import List
 
 load_dotenv()
@@ -23,14 +26,22 @@ BASE_DIR = Path(__file__).resolve().parent
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_MB", "50")) * 1024 * 1024
 MAX_VIDEO_SECONDS = int(os.getenv("MAX_VIDEO_SECONDS", "30"))
 MAX_FRAMES = int(os.getenv("MAX_FRAMES", "15"))
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",") if o.strip()]
+
+# Per-IP limits protect the Groq/Roboflow quota. Behind a reverse proxy, run uvicorn with
+# --proxy-headers --forwarded-allow-ips=<proxy ip> so get_remote_address sees the real client.
+UPLOAD_LIMIT = os.getenv("UPLOAD_RATE_LIMIT", "5/minute;30/hour")
+RECIPES_LIMIT = os.getenv("RECIPES_RATE_LIMIT", "10/minute;100/hour")
+limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI()
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_methods=["POST", "GET"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type"],
 )
 
 
@@ -128,7 +139,8 @@ def detect_ingredients_groq(frames_dir: str):
 
 
 @app.post("/upload")
-def upload_video(video: UploadFile = File(...), model: str = "roboflow"):
+@limiter.limit(UPLOAD_LIMIT)
+def upload_video(request: Request, video: UploadFile = File(...), model: str = "roboflow"):
     """
     Uploads a video, extracts frames, detects ingredients, and returns the ingredients.
     Declared as a plain `def` so FastAPI runs it in a threadpool (the work is blocking).
@@ -193,11 +205,12 @@ def generate_recipes(ingredients: List[str]):
     return chat_completion.choices[0].message.content
 
 @app.post("/recipes")
-def get_recipes(request: IngredientsRequest):
+@limiter.limit(RECIPES_LIMIT)
+def get_recipes(request: Request, body: IngredientsRequest):
     """
     Generates recipes from a list of ingredients.
     """
-    ingredients = [i.strip() for i in request.ingredients if i.strip()][:50]
+    ingredients = [i.strip()[:60] for i in body.ingredients if i.strip()][:50]
     if not ingredients:
         raise HTTPException(status_code=422, detail="Provide at least one ingredient.")
     try:
@@ -207,4 +220,4 @@ def get_recipes(request: IngredientsRequest):
         raise HTTPException(status_code=500, detail="We couldn't generate recipes. Please try again.")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=3003)
+    uvicorn.run(app, host=os.getenv("HOST", "127.0.0.1"), port=3003)
