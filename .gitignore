@@ -214,3 +214,5 @@ frontend/node_modules/
 .DS_Store
 backend/.env
 yolov8n.pt
+# Frontend source module, not a Python lib dir
+!frontend/pantry/src/lib/
